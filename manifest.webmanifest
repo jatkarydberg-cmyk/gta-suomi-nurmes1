@@ -1,0 +1,328 @@
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score');
+const timerEl = document.getElementById('timer');
+const healthEl = document.getElementById('health');
+const messageEl = document.getElementById('message');
+const installBtn = document.getElementById('installBtn');
+
+const WORLD = { width: 1000, height: 1200 };
+const keys = {};
+const controlState = { up: false, down: false, left: false, right: false };
+let deferredPrompt = null;
+let lastTime = 0;
+let accumulator = 0;
+
+const state = {
+  score: 0,
+  health: 3,
+  timeLeft: 60,
+  finished: false,
+  won: false,
+  pickups: [],
+  police: { x: 500, y: 1000, radius: 26, speed: 200 },
+  player: { x: 520, y: 650, radius: 22, speed: 260 },
+};
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function spawnPickups() {
+  const pickups = [];
+  const count = 6;
+  for (let i = 0; i < count; i += 1) {
+    let x = 80 + Math.random() * (WORLD.width - 160);
+    let y = 80 + Math.random() * (WORLD.height - 160);
+    while (distance(x, y, state.player.x, state.player.y) < 180) {
+      x = 80 + Math.random() * (WORLD.width - 160);
+      y = 80 + Math.random() * (WORLD.height - 160);
+    }
+    pickups.push({ x, y, radius: 16, collected: false });
+  }
+  state.pickups = pickups;
+}
+
+function distance(aX, aY, bX, bY) {
+  return Math.hypot(aX - bX, aY - bY);
+}
+
+function updateHUD() {
+  scoreEl.textContent = String(state.score);
+  timerEl.textContent = String(Math.ceil(state.timeLeft));
+  healthEl.textContent = String(state.health);
+}
+
+function handleInput() {
+  let dx = 0;
+  let dy = 0;
+
+  if (keys.ArrowUp || keys.w || controlState.up) dy -= 1;
+  if (keys.ArrowDown || keys.s || controlState.down) dy += 1;
+  if (keys.ArrowLeft || keys.a || controlState.left) dx -= 1;
+  if (keys.ArrowRight || keys.d || controlState.right) dx += 1;
+
+  if (dx !== 0 || dy !== 0) {
+    const length = Math.hypot(dx, dy) || 1;
+    dx /= length;
+    dy /= length;
+    const moveSpeed = state.player.speed;
+    state.player.x += dx * moveSpeed * (1 / 60);
+    state.player.y += dy * moveSpeed * (1 / 60);
+  }
+
+  state.player.x = clamp(state.player.x, 50, WORLD.width - 50);
+  state.player.y = clamp(state.player.y, 50, WORLD.height - 50);
+}
+
+function updatePolice(dt) {
+  const dx = state.player.x - state.police.x;
+  const dy = state.player.y - state.police.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const step = state.police.speed * dt;
+  state.police.x += (dx / len) * step;
+  state.police.y += (dy / len) * step;
+
+  if (distance(state.player.x, state.player.y, state.police.x, state.police.y) < state.player.radius + state.police.radius + 6) {
+    state.health -= 1;
+    state.player.x = WORLD.width / 2;
+    state.player.y = WORLD.height / 2;
+    state.police.x = 500;
+    state.police.y = 1000;
+    if (state.health <= 0) {
+      endGame(false, 'Poliisi sai sinut kiinni! Yritä uudelleen.');
+    } else {
+      messageEl.textContent = 'Olet saanut osuman! Jatka liikkumista.';
+    }
+  }
+}
+
+function collectPickups() {
+  for (const pickup of state.pickups) {
+    if (!pickup.collected && distance(state.player.x, state.player.y, pickup.x, pickup.y) < state.player.radius + pickup.radius + 10) {
+      pickup.collected = true;
+      state.score += 10;
+      messageEl.textContent = 'Tähtä löytyi! Jatka kovaa menoa.';
+      if (state.pickups.every((item) => item.collected)) {
+        endGame(true, 'Voitit! Keräsit kaikki tähdet ja selviydyit poliisilta.');
+      }
+    }
+  }
+}
+
+function endGame(won, msg) {
+  state.finished = true;
+  state.won = won;
+  messageEl.textContent = msg;
+}
+
+function update(dt) {
+  if (state.finished) return;
+
+  state.timeLeft -= dt;
+  if (state.timeLeft <= 0) {
+    endGame(false, 'Aika loppui! Yritä uudelleen ja kerää enemmän tähtiä.');
+  }
+
+  handleInput();
+  updatePolice(dt);
+  collectPickups();
+  updateHUD();
+}
+
+function drawBackground() {
+  ctx.fillStyle = '#15341f';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = '#2d3748';
+  ctx.fillRect(140, 40, 140, canvas.height - 80);
+  ctx.fillRect(140, 40, canvas.width - 280, 140);
+  ctx.fillRect(canvas.width - 280, 40, 140, canvas.height - 80);
+  ctx.fillRect(140, canvas.height - 180, canvas.width - 280, 140);
+
+  ctx.fillStyle = '#1e293b';
+  ctx.fillRect(0, 0, canvas.width, 40);
+  ctx.fillRect(0, canvas.height - 40, canvas.width, 40);
+  ctx.fillRect(0, 0, 40, canvas.height);
+  ctx.fillRect(canvas.width - 40, 0, 40, canvas.height);
+
+  ctx.fillStyle = '#4b5563';
+  ctx.fillRect(0, 180, canvas.width, 26);
+  ctx.fillRect(0, 450, canvas.width, 26);
+  ctx.fillRect(190, 0, 26, canvas.height);
+  ctx.fillRect(230, 0, 26, canvas.height);
+
+  ctx.fillStyle = '#0f766e';
+  for (let i = 0; i < 20; i += 1) {
+    const x = (i * 55) % canvas.width;
+    const y = (i * 91) % canvas.height;
+    ctx.fillRect(x + 10, y + 18, 20, 20);
+  }
+}
+
+function drawPlayer() {
+  ctx.fillStyle = '#fbbf24';
+  ctx.beginPath();
+  ctx.arc(state.player.x * (canvas.width / WORLD.width), state.player.y * (canvas.height / WORLD.height), state.player.radius, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = '#1f2937';
+  ctx.fillRect(
+    state.player.x * (canvas.width / WORLD.width) - 8,
+    state.player.y * (canvas.height / WORLD.height) - 26,
+    16,
+    16
+  );
+}
+
+function drawPolice() {
+  ctx.fillStyle = '#f87171';
+  ctx.beginPath();
+  ctx.arc(state.police.x * (canvas.width / WORLD.width), state.police.y * (canvas.height / WORLD.height), state.police.radius, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = '#111827';
+  ctx.fillRect(
+    state.police.x * (canvas.width / WORLD.width) - 18,
+    state.police.y * (canvas.height / WORLD.height) - 30,
+    36,
+    16
+  );
+}
+
+function drawPickups() {
+  for (const pickup of state.pickups) {
+    if (pickup.collected) continue;
+    ctx.fillStyle = '#facc15';
+    ctx.beginPath();
+    ctx.moveTo(
+      pickup.x * (canvas.width / WORLD.width),
+      pickup.y * (canvas.height / WORLD.height) - pickup.radius
+    );
+    ctx.lineTo(
+      pickup.x * (canvas.width / WORLD.width) + pickup.radius * 0.7,
+      pickup.y * (canvas.height / WORLD.height) + pickup.radius * 0.2
+    );
+    ctx.lineTo(
+      pickup.x * (canvas.width / WORLD.width) - pickup.radius * 0.7,
+      pickup.y * (canvas.height / WORLD.height) + pickup.radius * 0.2
+    );
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+function drawOverlay() {
+  if (!state.finished) return;
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.7)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = '#f8fafc';
+  ctx.font = 'bold 34px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(state.won ? 'VOITTO!' : 'HÄVISIT', canvas.width / 2, canvas.height / 2 - 20);
+  ctx.font = '20px sans-serif';
+  ctx.fillText('Paina F5 tai päivitä', canvas.width / 2, canvas.height / 2 + 25);
+}
+
+function render() {
+  drawBackground();
+  drawPickups();
+  drawPolice();
+  drawPlayer();
+  drawOverlay();
+}
+
+function gameLoop(timestamp) {
+  const dt = Math.min((timestamp - lastTime) / 1000 || 0.016, 0.033);
+  lastTime = timestamp;
+  accumulator += dt;
+
+  if (accumulator >= 1 / 60) {
+    update(1 / 60);
+    accumulator = 0;
+  }
+
+  render();
+  requestAnimationFrame(gameLoop);
+}
+
+function resetGame() {
+  state.score = 0;
+  state.health = 3;
+  state.timeLeft = 60;
+  state.finished = false;
+  state.won = false;
+  state.player.x = WORLD.width / 2;
+  state.player.y = WORLD.height / 2;
+  state.police.x = 500;
+  state.police.y = 1000;
+  spawnPickups();
+  updateHUD();
+  messageEl.textContent = 'Kerää kaikki tähdet ja vältä poliisia.';
+}
+
+window.addEventListener('keydown', (event) => {
+  keys[event.key] = true;
+  keys[event.key.toLowerCase()] = true;
+  if (event.key === ' ') {
+    event.preventDefault();
+  }
+});
+
+window.addEventListener('keyup', (event) => {
+  keys[event.key] = false;
+  keys[event.key.toLowerCase()] = false;
+});
+
+const controlButtons = document.querySelectorAll('[data-dir]');
+controlButtons.forEach((button) => {
+  const dir = button.dataset.dir;
+
+  const press = () => {
+    controlState[dir] = true;
+  };
+
+  const release = () => {
+    controlState[dir] = false;
+  };
+
+  button.addEventListener('pointerdown', press);
+  button.addEventListener('pointerup', release);
+  button.addEventListener('pointerleave', release);
+  button.addEventListener('pointercancel', release);
+});
+
+window.addEventListener('blur', () => {
+  Object.keys(controlState).forEach((key) => {
+    controlState[key] = false;
+  });
+  Object.keys(keys).forEach((key) => {
+    keys[key] = false;
+  });
+});
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch((error) => {
+      console.warn('Service worker registration failed:', error);
+    });
+  });
+}
+
+window.addEventListener('beforeinstallprompt', (event) => {
+  event.preventDefault();
+  deferredPrompt = event;
+  installBtn.classList.remove('hidden');
+});
+
+installBtn.addEventListener('click', async () => {
+  if (!deferredPrompt) return;
+  deferredPrompt.prompt();
+  await deferredPrompt.userChoice;
+  deferredPrompt = null;
+  installBtn.classList.add('hidden');
+});
+
+resetGame();
+requestAnimationFrame(gameLoop);

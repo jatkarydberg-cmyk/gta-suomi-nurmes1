@@ -1,1 +1,14 @@
-# gta-suomi-nurmes1
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="g" x1="0" x2="1">
+      <stop offset="0%" stop-color="#fbbf24" />
+      <stop offset="100%" stop-color="#22c55e" />
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="24" fill="#0f172a"/>
+  <circle cx="64" cy="64" r="42" fill="url(#g)"/>
+  <rect x="40" y="52" width="48" height="24" rx="6" fill="#111827"/>
+  <path d="M50 45 L64 27 L78 45 Z" fill="#f8fafc"/>
+  <circle cx="48" cy="82" r="7" fill="#111827"/>
+  <circle cx="80" cy="82" r="7" fill="#111827"/>
+</svg>
