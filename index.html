@@ -1,464 +1,65 @@
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
-const scoreEl = document.getElementById('score');
-const timerEl = document.getElementById('timer');
-const healthEl = document.getElementById('health');
-const missionTextEl = document.getElementById('missionText');
-const messageEl = document.getElementById('message');
-const restartBtn = document.getElementById('restartBtn');
-const installBtn = document.getElementById('installBtn');
-
-const WORLD = { width: 2200, height: 2200 };
-const CHASE_TIME = 90;
-const keys = {};
-const controlState = { up: false, down: false, left: false, right: false };
-let deferredPrompt = null;
-let lastTime = 0;
-let accumulator = 0;
-
-const state = {
-  score: 0,
-  health: 3,
-  timeLeft: CHASE_TIME,
-  finished: false,
-  won: false,
-  moneyNeeded: 6,
-  pickups: [],
-  police: [],
-  cars: [],
-  camera: { x: 0, y: 0 },
-  player: {
-    x: 180,
-    y: 180,
-    radius: 22,
-    speed: 0,
-    maxSpeed: 320,
-    angle: 0,
-    color: '#22c55e',
-  },
-};
-
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
-}
-
-function distance(x1, y1, x2, y2) {
-  return Math.hypot(x1 - x2, y1 - y2);
-}
-
-function randomBetween(min, max) {
-  return min + Math.random() * (max - min);
-}
-
-function createPickups() {
-  const positions = [
-    [280, 280], [620, 430], [1180, 260], [1600, 620], [860, 920], [1420, 990],
-    [280, 1380], [980, 1580], [1700, 1350], [560, 1800], [1500, 1750], [1900, 900],
-  ];
-
-  state.pickups = positions.map(([x, y], index) => ({
-    id: index,
-    x,
-    y,
-    radius: 18,
-    collected: false,
-    pulse: Math.random() * Math.PI * 2,
-  }));
-}
-
-function createPolice() {
-  state.police = [
-    { x: 1340, y: 260, radius: 20, speed: 180, angle: 0, color: '#f87171' },
-    { x: 1760, y: 1220, radius: 20, speed: 195, angle: 0, color: '#f87171' },
-    { x: 470, y: 1550, radius: 20, speed: 210, angle: 0, color: '#f87171' },
-  ];
-}
-
-function createCars() {
-  const colors = ['#f59e0b', '#60a5fa', '#f472b6', '#a78bfa', '#34d399', '#fb7185', '#fbbf24'];
-
-  state.cars = Array.from({ length: 8 }, (_, index) => {
-    const x = 260 + (index % 4) * 420 + randomBetween(-60, 40);
-    const y = 260 + Math.floor(index / 4) * 420 + randomBetween(-80, 80);
-    return {
-      x,
-      y,
-      radius: 20,
-      angle: randomBetween(0, Math.PI * 2),
-      speed: randomBetween(85, 150),
-      drift: randomBetween(-0.9, 0.9),
-      color: colors[index % colors.length],
-    };
-  });
-}
-
-function updateMissionText() {
-  const collected = state.pickups.filter((pickup) => pickup.collected).length;
-  missionTextEl.textContent = `Rahapussit: ${collected}/${state.moneyNeeded} • ${state.score >= state.moneyNeeded * 25 ? 'Päästäkää pois!' : 'Kerää lisää.'}`;
-}
-
-function updateHUD() {
-  scoreEl.textContent = `${state.score} €`;
-  timerEl.textContent = String(Math.max(0, Math.ceil(state.timeLeft)));
-  healthEl.textContent = String(state.health);
-  updateMissionText();
-}
-
-function setMessage(text) {
-  messageEl.textContent = text;
-}
-
-function resetPlayer() {
-  state.player.x = 180;
-  state.player.y = 180;
-  state.player.speed = 0;
-  state.player.angle = 0;
-}
-
-function resetGame() {
-  state.score = 0;
-  state.health = 3;
-  state.timeLeft = CHASE_TIME;
-  state.finished = false;
-  state.won = false;
-  createPickups();
-  createPolice();
-  createCars();
-  resetPlayer();
-  updateHUD();
-  setMessage('Versio 2: kaupungin autot ja rahapussit ovat valmiina.');
-}
-
-function handleInput() {
-  let dx = 0;
-  let dy = 0;
-
-  if (keys.ArrowUp || keys.w || controlState.up) dy -= 1;
-  if (keys.ArrowDown || keys.s || controlState.down) dy += 1;
-  if (keys.ArrowLeft || keys.a || controlState.left) dx -= 1;
-  if (keys.ArrowRight || keys.d || controlState.right) dx += 1;
-
-  const mag = Math.hypot(dx, dy);
-  if (mag > 0) {
-    dx /= mag;
-    dy /= mag;
-    state.player.angle = Math.atan2(dy, dx);
-    state.player.speed = state.player.maxSpeed;
-  } else {
-    state.player.speed *= 0.85;
-    if (Math.abs(state.player.speed) < 6) state.player.speed = 0;
-  }
-
-  state.player.x += Math.cos(state.player.angle) * state.player.speed * (1 / 60);
-  state.player.y += Math.sin(state.player.angle) * state.player.speed * (1 / 60);
-
-  state.player.x = clamp(state.player.x, 28, WORLD.width - 28);
-  state.player.y = clamp(state.player.y, 28, WORLD.height - 28);
-}
-
-function updateCars(dt) {
-  for (const car of state.cars) {
-    car.x += Math.cos(car.angle) * car.speed * dt;
-    car.y += Math.sin(car.angle) * car.speed * dt;
-
-    if (car.x < 120 || car.x > WORLD.width - 120 || car.y < 120 || car.y > WORLD.height - 120) {
-      car.angle += Math.PI * 0.5;
-    }
-
-    car.angle += car.drift * dt;
-
-    if (distance(state.player.x, state.player.y, car.x, car.y) < state.player.radius + car.radius + 12) {
-      state.health -= 1;
-      setMessage('Autot törmäsivät! Vauhtia ja tarkkaavaisuutta.');
-      state.player.x = 180;
-      state.player.y = 180;
-      if (state.health <= 0) {
-        endGame(false, 'Et selvinnyt liikenteestä. Yritä uudelleen.');
-      }
-    }
-  }
-}
-
-function updatePolice(dt) {
-  for (const cop of state.police) {
-    const dx = state.player.x - cop.x;
-    const dy = state.player.y - cop.y;
-    const dist = Math.hypot(dx, dy) || 1;
-    const move = cop.speed * dt;
-
-    cop.x += (dx / dist) * move;
-    cop.y += (dy / dist) * move;
-    cop.angle = Math.atan2(dy, dx);
-
-    if (distance(state.player.x, state.player.y, cop.x, cop.y) < state.player.radius + cop.radius + 12) {
-      state.health -= 1;
-      state.player.x = 180;
-      state.player.y = 180;
-      setMessage('Poliisi sai kiinni! Jatka ajamista.');
-      if (state.health <= 0) {
-        endGame(false, 'Poliisi sai sinut kiinni. Älä anna periksi.');
-        return;
-      }
-    }
-  }
-}
-
-function collectPickups() {
-  for (const pickup of state.pickups) {
-    if (!pickup.collected && distance(state.player.x, state.player.y, pickup.x, pickup.y) < state.player.radius + pickup.radius + 12) {
-      pickup.collected = true;
-      state.score += 25;
-      setMessage('Rahapussi kerätty! Kaupunki on sinun.');
-    }
-  }
-
-  if (state.score >= state.moneyNeeded * 25) {
-    endGame(true, 'Voitit version 2:n! Keräsit tarpeeksi rahaa ja jäit hengissä.');
-  }
-}
-
-function endGame(won, text) {
-  state.finished = true;
-  state.won = won;
-  setMessage(text);
-}
-
-function update(dt) {
-  if (state.finished) return;
-
-  state.timeLeft -= dt;
-  if (state.timeLeft <= 0) {
-    endGame(false, 'Aika loppui. Yritä uudestaan ja kerää lisää rahaa.');
-  }
-
-  handleInput();
-  updateCars(dt);
-  updatePolice(dt);
-  collectPickups();
-  updateHUD();
-}
-
-function drawCity() {
-  const width = canvas.width;
-  const height = canvas.height;
-  const camX = clamp(state.player.x - width / 2, 0, WORLD.width - width);
-  const camY = clamp(state.player.y - height / 2, 0, WORLD.height - height);
-  state.camera.x = camX;
-  state.camera.y = camY;
-
-  ctx.fillStyle = '#0b3b2d';
-  ctx.fillRect(0, 0, width, height);
-
-  const roads = [
-    { x: 0, y: 150, w: WORLD.width, h: 180 },
-    { x: 0, y: 700, w: WORLD.width, h: 180 },
-    { x: 0, y: 1250, w: WORLD.width, h: 180 },
-    { x: 0, y: 1800, w: WORLD.width, h: 180 },
-    { x: 150, y: 0, w: 180, h: WORLD.height },
-    { x: 700, y: 0, w: 180, h: WORLD.height },
-    { x: 1250, y: 0, w: 180, h: WORLD.height },
-    { x: 1800, y: 0, w: 180, h: WORLD.height },
-  ];
-
-  ctx.fillStyle = '#1f2937';
-  for (const road of roads) {
-    ctx.fillRect(road.x - camX, road.y - camY, road.w, road.h);
-  }
-
-  ctx.strokeStyle = '#f8fafc';
-  ctx.lineWidth = 4;
-  for (const road of roads) {
-    if (road.w > road.h) {
-      ctx.beginPath();
-      ctx.moveTo(road.x - camX + 20, road.y - camY + road.h / 2);
-      ctx.lineTo(road.x - camX + road.w - 20, road.y - camY + road.h / 2);
-      ctx.stroke();
-    } else {
-      ctx.beginPath();
-      ctx.moveTo(road.x - camX + road.w / 2, road.y - camY + 20);
-      ctx.lineTo(road.x - camX + road.w / 2, road.y - camY + road.h - 20);
-      ctx.stroke();
-    }
-  }
-
-  ctx.fillStyle = '#0b1120';
-  const blocks = [
-    [260, 380, 200, 150], [260, 960, 200, 180], [260, 1560, 200, 180],
-    [820, 380, 200, 180], [820, 960, 200, 180], [820, 1560, 200, 180],
-    [1380, 380, 200, 180], [1380, 960, 200, 180], [1380, 1560, 200, 180],
-    [1940, 380, 200, 170], [1940, 980, 200, 180], [1940, 1560, 200, 180],
-  ];
-
-  for (const [bx, by, bw, bh] of blocks) {
-    ctx.fillRect(bx - camX, by - camY, bw, bh);
-    ctx.fillStyle = '#334155';
-    ctx.fillRect(bx - camX + 12, by - camY + 10, bw - 24, 18);
-    ctx.fillStyle = '#0b1120';
-  }
-}
-
-function drawPickup(pickup) {
-  if (pickup.collected) return;
-  const x = pickup.x - state.camera.x;
-  const y = pickup.y - state.camera.y;
-  const pulse = (Math.sin(Date.now() / 160 + pickup.pulse) + 1) * 0.35;
-
-  ctx.fillStyle = '#facc15';
-  ctx.beginPath();
-  ctx.moveTo(x, y - (pickup.radius + pulse));
-  ctx.lineTo(x + (pickup.radius + pulse) * 0.8, y + pickup.radius * 0.3);
-  ctx.lineTo(x - (pickup.radius + pulse) * 0.8, y + pickup.radius * 0.3);
-  ctx.closePath();
-  ctx.fill();
-}
-
-function drawCar(x, y, angle, color, isPlayer = false) {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(angle);
-
-  ctx.fillStyle = color;
-  ctx.fillRect(-22, -12, 44, 24);
-
-  ctx.fillStyle = '#111827';
-  ctx.fillRect(-10, -19, 20, 8);
-
-  ctx.fillStyle = '#e2e8f0';
-  ctx.fillRect(-18, -9, 8, 4);
-  ctx.fillRect(10, -9, 8, 4);
-  ctx.fillRect(-18, 5, 8, 4);
-  ctx.fillRect(10, 5, 8, 4);
-
-  if (isPlayer) {
-    ctx.fillStyle = '#fef3c7';
-    ctx.fillRect(-7, -16, 14, 6);
-  }
-
-  ctx.restore();
-}
-
-function drawPolice() {
-  for (const cop of state.police) {
-    const x = cop.x - state.camera.x;
-    const y = cop.y - state.camera.y;
-    drawCar(x, y, cop.angle, cop.color, false);
-  }
-}
-
-function drawCars() {
-  for (const car of state.cars) {
-    const x = car.x - state.camera.x;
-    const y = car.y - state.camera.y;
-    drawCar(x, y, car.angle, car.color, false);
-  }
-}
-
-function drawPlayer() {
-  const x = state.player.x - state.camera.x;
-  const y = state.player.y - state.camera.y;
-  drawCar(x, y, state.player.angle, state.player.color, true);
-}
-
-function drawOverlay() {
-  if (!state.finished) return;
-
-  ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.fillStyle = '#f8fafc';
-  ctx.textAlign = 'center';
-  ctx.font = 'bold 34px sans-serif';
-  ctx.fillText(state.won ? 'VOITTO!' : 'HÄVISIT', canvas.width / 2, canvas.height / 2 - 20);
-  ctx.font = '18px sans-serif';
-  ctx.fillText('Paina Uusi peli -painiketta', canvas.width / 2, canvas.height / 2 + 18);
-}
-
-function render() {
-  drawCity();
-  for (const pickup of state.pickups) drawPickup(pickup);
-  drawCars();
-  drawPolice();
-  drawPlayer();
-  drawOverlay();
-}
-
-function gameLoop(timestamp) {
-  const dt = Math.min((timestamp - lastTime) / 1000 || 0.016, 0.033);
-  lastTime = timestamp;
-  accumulator += dt;
-
-  if (accumulator >= 1 / 60) {
-    update(1 / 60);
-    accumulator = 0;
-  }
-
-  render();
-  requestAnimationFrame(gameLoop);
-}
-
-window.addEventListener('keydown', (event) => {
-  const key = event.key.toLowerCase();
-  keys[event.key] = true;
-  keys[key] = true;
-  if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(key)) {
-    event.preventDefault();
-  }
-});
-
-window.addEventListener('keyup', (event) => {
-  const key = event.key.toLowerCase();
-  keys[event.key] = false;
-  keys[key] = false;
-});
-
-const controlButtons = document.querySelectorAll('[data-dir]');
-controlButtons.forEach((button) => {
-  const dir = button.dataset.dir;
-
-  const press = () => {
-    controlState[dir] = true;
-  };
-
-  const release = () => {
-    controlState[dir] = false;
-  };
-
-  button.addEventListener('pointerdown', press);
-  button.addEventListener('pointerup', release);
-  button.addEventListener('pointerleave', release);
-  button.addEventListener('pointercancel', release);
-});
-
-window.addEventListener('blur', () => {
-  Object.keys(controlState).forEach((key) => (controlState[key] = false));
-  Object.keys(keys).forEach((key) => (keys[key] = false));
-});
-
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch((error) => {
-      console.warn('Service worker registration failed:', error);
-    });
-  });
-}
-
-window.addEventListener('beforeinstallprompt', (event) => {
-  event.preventDefault();
-  deferredPrompt = event;
-  installBtn.classList.remove('hidden');
-});
-
-installBtn.addEventListener('click', async () => {
-  if (!deferredPrompt) return;
-  deferredPrompt.prompt();
-  await deferredPrompt.userChoice;
-  deferredPrompt = null;
-  installBtn.classList.add('hidden');
-});
-
-restartBtn.addEventListener('click', () => {
-  resetGame();
-});
-
-resetGame();
-requestAnimationFrame(gameLoop);
+<!DOCTYPE html>
+<html lang="fi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#111827" />
+    <meta name="description" content="GTA Suomi Nurmes 1 - mobiiliystävällinen minipeli PWA-versiona." />
+    <title>GTA Suomi Nurmes 1</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="icon.svg" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="title-block">
+          <p class="eyebrow">Open world street run</p>
+          <h1>GTA Suomi Nurmes 1</h1>
+        </div>
+        <button id="restartBtn" class="secondary-btn" type="button">Uusi peli</button>
+      </header>
+
+      <div class="hud">
+        <div class="stat">
+          <span class="label">Rahat</span>
+          <strong id="score">0 €</strong>
+        </div>
+        <div class="stat">
+          <span class="label">Aika</span>
+          <strong id="timer">90</strong>
+        </div>
+        <div class="stat">
+          <span class="label">Kestävyys</span>
+          <strong id="health">3</strong>
+        </div>
+      </div>
+
+      <div class="mission-bar">
+        <span class="mission-label">Tehtävä</span>
+        <strong id="missionText">Kerää 6 rahapussia ennen kuin poliisi saa sinut kiinni.</strong>
+      </div>
+
+      <canvas id="gameCanvas" width="420" height="680" aria-label="Pelin näyttö"></canvas>
+
+      <div class="controls" aria-label="Ohjauspainikkeet">
+        <div class="control-row">
+          <button type="button" data-dir="up">▲</button>
+        </div>
+        <div class="control-row middle">
+          <button type="button" data-dir="left">◀</button>
+          <button type="button" data-dir="down">▼</button>
+          <button type="button" data-dir="right">▶</button>
+        </div>
+      </div>
+
+      <div id="message" class="message" aria-live="polite">
+        Aja Nurmeksen kaduilla, kerää rahapussit ja vältä poliisia.
+      </div>
+
+      <button id="installBtn" class="install-btn hidden" type="button">Asenna puhelimeen</button>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
